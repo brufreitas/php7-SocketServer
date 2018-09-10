@@ -22,11 +22,14 @@ class socket
   private $allsockets = array();
   private $consoleType = "bash";
   private $loopId = 0;
+
   // Events
   private $on_clientConnect = array();                   // $socket_index
   private $on_clientDisconnect = array();                // $socket_index
   private $on_messageReceived = array();                 // $socket_index, rawData
+  private $on_messageSent = array();                 // $socket_index, rawData
   private $on_tick = array();                            // $loopId
+
   /**
    * Create a socket on given host/port
    * @param string $host The host/bind address to use
@@ -46,9 +49,10 @@ class socket
     if ( ($ret = socket_listen($this->master,5)) < 0 ) {
       die("socket_listen() failed, reason: ".socket_strerror($ret));
     }
-    self::console('Start listening on Socket.');
+    self::console("Start listening on Socket.");
     $this->allsockets[] = $this->master;
   }
+
   public function on($event, $function) {
     $this->console(__FUNCTION__."/Binding event: " . $event, "green");
     if (strtoupper($event) == "CLIENTCONNECT") {
@@ -57,21 +61,24 @@ class socket
       $this->on_clientDisconnect[] = $function;
     } elseif (strtoupper($event) == "MESSAGERECEIVED") {
       $this->on_messageReceived[] = $function;
+    } elseif (strtoupper($event) == "MESSAGESENT") {
+      $this->on_messageSent[] = $function;
     } elseif (strtoupper($event) == "TICK") {
       $this->on_tick[] = $function;
     } else {
       $this->console("socket->on(): Unknown event: `{$event}`", "white", "red");
     }
   }
+
   public function listen($host, $port) {
     $this->createSocket($host, $port);
     $this->run();
   }
+
   private function run() {
     while (true) {
       $this->loopId++;
-      // var_dump($this->allsockets);
-      // sleep(1);
+
       $changed_sockets = $this->allsockets;
       $write  = array();
       $except = array();
@@ -90,7 +97,7 @@ class socket
           $this->allsockets[] = $client;
           end($this->allsockets);
           $new_socket_index = key($this->allsockets);
-          $this->console("Socket++ [{$new_socket_index}]", "light_green");
+          // $this->console("Socket++ [{$new_socket_index}]", "light_green");
           foreach($this->on_clientConnect as $func) {
             call_user_func($func, $new_socket_index);
           }
@@ -101,43 +108,55 @@ class socket
           $rawData .= $buffer;
           if ($bytes < 2048) break;
           // $this->console("Reading...");
-          usleep(1000);
+          usleep(500);
         }
+
         if ($bytes === false) {
           $this->console("socket_recv() failed, reason: [".socket_strerror(socket_last_error($socket))."]", "white", "red");
           continue;
         }
+
         $socket_index = array_search($socket, $this->allsockets);
         // $this->console("Received: [{$bytes}] bytes from socket_index: [{$socket_index}]");
         //  the client socket changed and there is no data --> disconnect
         if ($bytes === 0) {
-          $this->console("no data");
+          // $this->console("no data");
           $this->disconnect($socket);
-          foreach($this->on_clientDisconnect as $func) {
-            call_user_func($func, $socket_index);
-          }
           continue;
         }
-        // $this->console(">Socket< MessageReceived", "yellow");
+
         foreach($this->on_messageReceived as $func) {
-          // $this->console(">Socket< Executando evento on_messageReceived");
           call_user_func($func, $socket_index, $rawData);
         }
       }  //foreach socket_changed
+
       foreach($this->on_tick as $func) {
         call_user_func($func, $this->loopId);
       }
+
     } //while true
   }
+
   protected function disconnect ($socket) {
-    // $this->console("Entering socket->disconnect [{$socket}]", "yellow");
-    $socket_index = array_search($socket, $this->allsockets);
+    if (is_resource($socket)){
+      $socket_index = array_search($socket, $this->allsockets);
+    } else {
+      $socket_index = $socket;
+      $socket = $this->allsockets[$socket_index];
+    }
+
     if ($socket_index >= 0) {
       unset($this->allsockets[$socket_index]);
     }
     socket_close($socket);
-    $this->console("Socket-- [{$socket_index}]", "light_red");
+
+    foreach($this->on_clientDisconnect as $func) {
+      call_user_func($func, $socket_index);
+    }
+
+    // $this->console("Socket-- [{$socket_index}]", "light_red");
   }
+
   /**
    * Log a message
    * @param string $msg The message
@@ -159,6 +178,7 @@ class socket
     // print date('Y-m-d H:i:s') . " {$type}: {$msg}\n";
     // }
   }
+
   /**
    * Send a message over the socket
    * @param socket $client The destination socket
@@ -166,8 +186,14 @@ class socket
    */
   private function send($client_socket, $msg) {
     socket_write($client_socket, $msg, strlen($msg));
+
+    foreach($this->on_messageSent as $func) {
+      call_user_func($func, $socket_index, $msg);
+    }
+
   }
-    /**
+
+  /**
    * Send a message thru the socket (using the control index of the socket)
    * @param int $client_index The index destination socket
    * @param string $msg The message
@@ -176,9 +202,11 @@ class socket
     if (!isset($this->allsockets[$client_index])) {
       $this->console("sendByIndex Impossible Situation: Index `{$client_index}` unrecognized", "white", "red");
     }
+
     $client_socket = $this->allsockets[$client_index];
-    socket_write($client_socket, $msg, strlen($msg));
+    $this->send($client_socket, $msg);
   }
+
   /**
    * Send a message thru the socket to all the other client sockets but $socket_index_me
    * @param int $socket_index_me The index destination socket
@@ -187,23 +215,25 @@ class socket
   protected function sendToOthers($socket_index_me, $msg) {
     $skipSockets = array($this->master, $this->allsockets[$socket_index_me]);
     $them = array_diff($this->allsockets, $skipSockets);
-    $len = strlen($msg);
+
     foreach ($them as $sock) {
-      socket_write($sock, $msg, $len);
+      $this->send($sock, $msg);
     }
   }
+
   /**
    * Send a message thru the socket to all client sockets (broadcast)
    * @param string $msg The message that will be send
    */
   protected function sendToAll($msg) {
     $clients = array_diff($this->allsockets, array($this->master));
-    $len = strlen($msg);
+
     foreach ($clients as $sock) {
-      socket_write($sock, $msg, $len);
+      $this->send($sock, $msg);
     }
   }
 }
+
 function bash_fgColorCode($colorName) {
   if     (!$colorName                 ) {return "0;37";}
   elseif ($colorName == "dark_gray"   ) {return "1;30";}
@@ -224,6 +254,7 @@ function bash_fgColorCode($colorName) {
   elseif ($colorName == "white"       ) {return "1;37";}
   else                                  {return "0;37";}
 }
+
 function bash_bgColorCode($colorName) {
   if     (!$colorName                 ) {return "40";}
   elseif ($colorName == "black"       ) {return "40";}
