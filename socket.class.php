@@ -21,9 +21,10 @@ class socket
    */
   private $allsockets = array();
   private $readBufferSize = 2048;
+  private $nonblockingAcceptedErrors = array (/*EAGAIN or EWOULDBLOCK*/11, /*EINPROGRESS*/115);
+
   private $consoleType = "bash";
   private $loopId = 0;
-  private $nonblockingAcceptedErrors = array (/*EAGAIN or EWOULDBLOCK*/11, /*EINPROGRESS*/115);
 
   // Events
   private $on_clientConnect = array();          // $socket_index
