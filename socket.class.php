@@ -106,7 +106,7 @@ class socket
         $rawData = "";
         while ($bytes = @socket_recv($socket, $buffer, 2048, MSG_DONTWAIT)) {
           $rawData .= $buffer;
-          if ($bytes < 128) break;
+          if ($bytes < 2048) break;
           // $this->console("Reading...");
           usleep(500);
         }
