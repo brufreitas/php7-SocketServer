@@ -20,15 +20,17 @@ class socket
    * @allsockets array Holds all connected sockets
    */
   private $allsockets = array();
+  private $readBufferSize = 2048;
   private $consoleType = "bash";
   private $loopId = 0;
+  private $nonblockingAcceptedErrors = array (/*EAGAIN or EWOULDBLOCK*/11, /*EINPROGRESS*/115);
 
   // Events
-  private $on_clientConnect = array();                   // $socket_index
-  private $on_clientDisconnect = array();                // $socket_index
-  private $on_messageReceived = array();                 // $socket_index, rawData
-  private $on_messageSent = array();                 // $socket_index, rawData
-  private $on_tick = array();                            // $loopId
+  private $on_clientConnect = array();          // $socket_index
+  private $on_clientDisconnect = array();       // $socket_index
+  private $on_messageReceived = array();        // $socket_index, rawData
+  private $on_messageSent = array();            // $socket_index, rawData
+  private $on_tick = array();                   // $loopId
 
   /**
    * Create a socket on given host/port
@@ -103,15 +105,19 @@ class socket
           }
           continue;
         }
+
         $rawData = "";
-        while ($bytes = @socket_recv($socket, $buffer, 2048, MSG_DONTWAIT)) {
+        while (($bytes = @socket_recv($socket, $buffer, $this->readBufferSize, MSG_DONTWAIT)) !== false) {
           $rawData .= $buffer;
-          if ($bytes < 2048) break;
-          // $this->console("Reading...");
+          // if ($bytes < $this->readBufferSize) $this->console("Read {$bytes} bytes, will break.");;
+          // if ($bytes < $this->readBufferSize) break;
+          // $this->console("Read {$bytes} bytes");
           usleep(500);
         }
 
-        if ($bytes === false) {
+        // $this->console("Stop reading: ".socket_last_error($socket)."-".socket_strerror(socket_last_error($socket)));
+
+        if ($bytes === false && !in_array(socket_last_error($socket), $this->nonblockingAcceptedErrors)) {
           $this->console("socket_recv() failed, reason: [".socket_strerror(socket_last_error($socket))."]", "white", "red");
           continue;
         }
