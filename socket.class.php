@@ -106,7 +106,7 @@ class socket
         $rawData = "";
         while ($bytes = @socket_recv($socket, $buffer, 2048, MSG_DONTWAIT)) {
           $rawData .= $buffer;
-          if ($bytes < 2048) break;
+          if ($bytes < 128) break;
           // $this->console("Reading...");
           usleep(500);
         }
@@ -137,9 +137,13 @@ class socket
     } //while true
   }
 
+  private function getSocketIndexByResource ($socket) {
+    return array_search($socket, $this->allsockets);
+  }
+
   protected function disconnect ($socket) {
     if (is_resource($socket)){
-      $socket_index = array_search($socket, $this->allsockets);
+      $socket_index = $this->getSocketIndexByResource($socket);
     } else {
       $socket_index = $socket;
       $socket = $this->allsockets[$socket_index];
@@ -188,6 +192,7 @@ class socket
     socket_write($client_socket, $msg, strlen($msg));
 
     foreach($this->on_messageSent as $func) {
+      $socket_index = $this->getSocketIndexByResource($client_socket);
       call_user_func($func, $socket_index, $msg);
     }
 
