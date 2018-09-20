@@ -26,9 +26,11 @@ class socket
   private $consoleType = "bash";
   private $loopId = 0;
 
+  private $debugActive = false;
+
   // Events
-  private $on_clientConnect = array();          // $socket_index
-  private $on_clientDisconnect = array();       // $socket_index
+  private $on_clientConnected = array();        // $socket_index
+  private $on_clientDisconnected = array();     // $socket_index
   private $on_messageReceived = array();        // $socket_index, rawData
   private $on_messageSent = array();            // $socket_index, rawData
   private $on_tick = array();                   // $loopId
@@ -38,30 +40,37 @@ class socket
    * @param string $host The host/bind address to use
    * @param int $port The actual port to bind on
    */
-  private function createSocket($host, $port) {
+  private function createSocket(string $host, int $port) {
     if (!$this->master = socket_create(AF_INET, SOCK_STREAM, SOL_TCP)) {
-      die("socket_create() failed, reason: ".socket_strerror($this->master));
-    }
-    self::console("Socket [{$this->master}] created.");
-    socket_set_option($this->master, SOL_SOCKET, SO_REUSEADDR, 1);
-    if (!@socket_bind($this->master, $host, $port)) {
-      self::console("socket_bind() failed, reason: [".socket_strerror(socket_last_error($this->master))."]", "System", "white", "red");
+      $this->console("socket_create() failed, reason: [".socket_strerror(socket_last_error($this->master))."]", "System", "white", "red");
       exit;
     }
-    self::console("Socket bound to [{$host}:{$port}].");
-    if ( ($ret = socket_listen($this->master,5)) < 0 ) {
-      die("socket_listen() failed, reason: ".socket_strerror($ret));
+
+    $this->console("Socket [{$this->master}] created.");
+
+    socket_set_option($this->master, SOL_SOCKET, SO_REUSEADDR, 1);
+    if (!@socket_bind($this->master, $host, $port)) {
+      $this->console("socket_bind() failed, reason: [".socket_strerror(socket_last_error($this->master))."]", "System", "white", "red");
+      exit;
     }
-    self::console("Start listening on Socket.");
+
+    $this->console("Socket bound to [{$host} : {$port}].");
+    if ( ($ret = socket_listen($this->master,5)) < 0 ) {
+      $this->console("socket_listen() failed, reason: [".socket_strerror(socket_last_error($this->master))."]", "System", "white", "red");
+      exit;
+    }
+
+    $this->console("Start listening on Socket.");
+
     $this->allsockets[] = $this->master;
   }
 
   public function on($event, $function) {
     $this->console(__FUNCTION__."/Binding event: " . $event, "green");
-    if (strtoupper($event) == "CLIENTCONNECT") {
-      $this->on_clientConnect[] = $function;
-    } elseif (strtoupper($event) == "CLIENTDISCONNECT") {
-      $this->on_clientDisconnect[] = $function;
+    if (strtoupper($event) == "CLIENTCONNECTED") {
+      $this->on_clientConnected[] = $function;
+    } elseif (strtoupper($event) == "CLIENTDISCONNECTED") {
+      $this->on_clientDisconnected[] = $function;
     } elseif (strtoupper($event) == "MESSAGERECEIVED") {
       $this->on_messageReceived[] = $function;
     } elseif (strtoupper($event) == "MESSAGESENT") {
@@ -89,31 +98,40 @@ class socket
       //OR will wait 1ms(1000us) - should theoretically put less pressure on the cpu
       $num_sockets = socket_select($changed_sockets, $write, $except, 0, 1000);
       foreach ($changed_sockets as $socket) {
-        // master socket changed means there is a new socket request
+
         if ($socket == $this->master) {
-          // if accepting new socket fails
+          // master socket changed means there is a new socket request
+
           if (($client = socket_accept($this->master)) < 0) {
             $this->console("socket_accept() failed: reason: " . socket_strerror(socket_last_error($client)), "white", "red");
             continue;
           }
+
           // if it is successful push the client to the allsockets array
           $this->allsockets[] = $client;
+
           end($this->allsockets);
           $new_socket_index = key($this->allsockets);
-          // $this->console("Socket++ [{$new_socket_index}]", "light_green");
-          foreach($this->on_clientConnect as $func) {
+
+          $this->debug("Socket++ [{$new_socket_index}]", "light_green");
+
+          foreach($this->on_clientConnected as $func) {
             call_user_func($func, $new_socket_index);
           }
+
           continue;
         }
+
+        $socket_index = array_search($socket, $this->allsockets);
 
         $rawData = "";
         while (($bytes = @socket_recv($socket, $buffer, $this->readBufferSize, MSG_DONTWAIT)) !== false) {
           $rawData .= $buffer;
           // if ($bytes < $this->readBufferSize) $this->console("Read {$bytes} bytes, will break.");;
           // if ($bytes < $this->readBufferSize) break;
-          // $this->console("Read {$bytes} bytes");
+          $this->debug("Socket [{$socket_index}] read {$bytes} bytes");
           usleep(500);
+          usleep(100000);
         }
 
         // $this->console("Stop reading: ".socket_last_error($socket)."-".socket_strerror(socket_last_error($socket)));
@@ -123,7 +141,6 @@ class socket
           continue;
         }
 
-        $socket_index = array_search($socket, $this->allsockets);
         // $this->console("Received: [{$bytes}] bytes from socket_index: [{$socket_index}]");
         //  the client socket changed and there is no data --> disconnect
         if ($bytes === 0) {
@@ -149,7 +166,7 @@ class socket
   }
 
   protected function disconnect ($socket) {
-    if (is_resource($socket)){
+    if (is_resource($socket)) {
       $socket_index = $this->getSocketIndexByResource($socket);
     } else {
       $socket_index = $socket;
@@ -161,11 +178,25 @@ class socket
     }
     socket_close($socket);
 
-    foreach($this->on_clientDisconnect as $func) {
+    foreach($this->on_clientDisconnected as $func) {
       call_user_func($func, $socket_index);
     }
 
     // $this->console("Socket-- [{$socket_index}]", "light_red");
+  }
+
+  public function startDebug() {
+    $this->debugActive = true;
+  }
+
+  public function stoptDebug() {
+    $this->debugActive = false;
+  }
+
+  protected function debug($msg, $fg = null, $bg = null) {
+    if ($this->debugActive === true) {
+      $this->console($msg, $fg, $bg);
+    }
   }
 
   /**
@@ -174,7 +205,7 @@ class socket
    * @param string $type The type of the message
    */
   protected function console($msg, $fg = null, $bg = null) {
-    if ($consoleType = "bash") {
+    if ($this->consoleType == "bash") {
       $fgCode = bash_fgColorCode($fg);
       $bgCode = bash_bgColorCode($bg);
       $msg = 
@@ -183,7 +214,7 @@ class socket
         $msg.
         "\033[0m";
     }
-    print date("Y-m-d H:i:s").": {$msg}\n";
+    print getMicroNow().": {$msg}\n";
     // $msg = explode("\n", $msg);
     // foreach( $msg as $line ) {
     // print date('Y-m-d H:i:s') . " {$type}: {$msg}\n";
@@ -246,6 +277,7 @@ class socket
   }
 }
 
+// TODO: Remove this function from here
 function bash_fgColorCode($colorName) {
   if     (!$colorName                 ) {return "0;37";}
   elseif ($colorName == "dark_gray"   ) {return "1;30";}
@@ -267,6 +299,7 @@ function bash_fgColorCode($colorName) {
   else                                  {return "0;37";}
 }
 
+// TODO: Remove this function from here
 function bash_bgColorCode($colorName) {
   if     (!$colorName                 ) {return "40";}
   elseif ($colorName == "black"       ) {return "40";}
@@ -279,4 +312,11 @@ function bash_bgColorCode($colorName) {
   elseif ($colorName == "light_gray"  ) {return "47";}
   else                                  {return "40";}
 }
+
+// TODO: Remove this function from here
+function getMicroNow() {
+  $tod = gettimeofday();
+  return date("Y-m-d H:i:s", $tod["sec"]).".".sprintf("%06d", $tod["usec"]);
+}
+
 ?>
