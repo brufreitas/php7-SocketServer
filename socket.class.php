@@ -131,7 +131,7 @@ class socket
           // if ($bytes < $this->readBufferSize) break;
           $this->debug("Socket [{$socket_index}] read {$bytes} bytes");
           usleep(500);
-          usleep(100000);
+          // usleep(100000);
         }
 
         // $this->console("Stop reading: ".socket_last_error($socket)."-".socket_strerror(socket_last_error($socket)));
